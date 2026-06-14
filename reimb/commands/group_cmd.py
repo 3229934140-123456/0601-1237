@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from ..config import load_task_state, save_task_state, load_task_config, append_log
+from ..config import load_task_state, save_task_state, load_task_config, save_task_config, append_log
 from ..models import Receipt, TaskStatus
 from ..utils import group_by_project, filter_by_month
 

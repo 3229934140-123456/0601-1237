@@ -104,7 +104,7 @@ def get_modification_history(task_dir: Path, receipt_id: Optional[str] = None) -
     return all_mods
 
 
-def view_progress(task_dir: Path) -> dict:
+def view_progress(task_dir: Path, include_all_exports: bool = False) -> dict:
     state = load_task_state(task_dir)
     receipts = [Receipt.from_dict(r) for r in state.receipts]
 
@@ -120,6 +120,7 @@ def view_progress(task_dir: Path) -> dict:
     duplicates = sum(1 for r in receipts if r.is_duplicate)
     missing = sum(1 for r in receipts if r.is_missing_attachment)
     high_risk = sum(1 for r in receipts if r.risk_level == "高")
+    medium_risk = sum(1 for r in receipts if r.risk_level == "中")
     modified = sum(1 for r in receipts if r.is_modified)
 
     status_order = ["已初始化", "已扫描", "已提取", "已检查", "已归类", "已导出", "已审核"]
@@ -137,10 +138,32 @@ def view_progress(task_dir: Path) -> dict:
             export_records.append(er)
     export_records.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
 
+    export_limit = len(export_records) if include_all_exports else 10
+
+    operation_labels = {
+        "export": "普通导出",
+        "export_month": "按月导出",
+        "archive_month": "月度归档",
+        "report": "汇总报告",
+    }
+    for er in export_records:
+        op = er.get("operation", "export")
+        er["operation_label"] = operation_labels.get(op, op)
+
+    total_amount_all = sum(r.amount or 0 for r in receipts)
+
+    month_distribution = {}
+    for r in receipts:
+        if r.date:
+            m = r.date[:7]
+            month_distribution[m] = month_distribution.get(m, 0) + 1
+
     return {
         "task_name": state.task_name,
         "status": state.status,
+        "rule_version": state.config.get("rule_version", 1) if state.config else 1,
         "total_receipts": total,
+        "total_amount": total_amount_all,
         "ocr_completed": has_ocr,
         "date_extracted": has_date,
         "amount_extracted": has_amount,
@@ -148,12 +171,14 @@ def view_progress(task_dir: Path) -> dict:
         "duplicates": duplicates,
         "missing_attachments": missing,
         "high_risk": high_risk,
+        "medium_risk": medium_risk,
         "modified": modified,
         "pipeline": pipeline,
         "log_count": len(state.logs),
         "status_counts": status_counts,
-        "export_records": export_records[:5],
+        "export_records": export_records[:export_limit],
         "total_exports": len(export_records),
+        "month_distribution": sorted(month_distribution.items()),
     }
 
 

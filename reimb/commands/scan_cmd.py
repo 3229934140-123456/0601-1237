@@ -36,7 +36,7 @@ def _resolve_conflict_name(receipts_dir: Path, filename: str, source_subdir: str
     return candidate, stored_name
 
 
-def scan_source_dir(task_dir: Path) -> dict:
+def scan_source_dir(task_dir: Path, skip_duplicate_filter: bool = True) -> dict:
     state = load_task_state(task_dir)
     config = load_task_config(task_dir)
     source_dir = Path(config.source_dir)
@@ -45,11 +45,9 @@ def scan_source_dir(task_dir: Path) -> dict:
         raise FileNotFoundError(f"源目录不存在: {source_dir}")
 
     receipts_dir = task_dir / RECEIPTS_DIR
-    existing_hashes = {r.get("file_hash", "") for r in state.receipts}
     existing_ids = {r.get("id") for r in state.receipts}
 
     new_receipts = []
-    skipped = 0
     total_files = 0
 
     for filepath in sorted(source_dir.rglob("*")):
@@ -60,10 +58,6 @@ def scan_source_dir(task_dir: Path) -> dict:
 
         total_files += 1
         file_hash = compute_file_hash(filepath)
-
-        if file_hash in existing_hashes:
-            skipped += 1
-            continue
 
         try:
             rel_path = filepath.relative_to(source_dir)
@@ -93,7 +87,6 @@ def scan_source_dir(task_dir: Path) -> dict:
             receipt.id = uuid.uuid4().hex[:12]
 
         new_receipts.append(receipt)
-        existing_hashes.add(file_hash)
         existing_ids.add(receipt.id)
 
     state.receipts.extend([r.to_dict() for r in new_receipts])
@@ -103,12 +96,13 @@ def scan_source_dir(task_dir: Path) -> dict:
     result = {
         "total_found": total_files,
         "added": len(new_receipts),
-        "skipped": skipped,
+        "skipped": 0,
         "new_receipts": new_receipts,
+        "note": "扫描阶段未过滤重复，重复票据将在check阶段标记",
     }
 
     append_log(
         task_dir, "scan",
-        f"扫描完成: 发现{total_files}个文件, 新增{len(new_receipts)}个, 跳过重复{skipped}个"
+        f"扫描完成: 发现{total_files}个文件, 新增{len(new_receipts)}个（扫描阶段未去重，重复票据将在check阶段标记）"
     )
     return result

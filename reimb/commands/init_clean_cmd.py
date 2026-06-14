@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 from ..config import (
     init_task_dirs, save_task_state, load_task_state, save_task_config,
@@ -16,6 +17,12 @@ DEFAULT_ATTACHMENT_RULES = [
     AttachmentRule(receipt_type=ReceiptType.HOTEL.value, required_attachments=["入住确认单", "审批单"]),
     AttachmentRule(receipt_type=ReceiptType.INVOICE.value, required_attachments=["合同", "审批单"]),
 ]
+
+
+CLEAN_MODE_EXPORTS = "exports_only"
+CLEAN_MODE_OCR = "ocr_only"
+CLEAN_MODE_RESET = "reset_full"
+CLEAN_MODE_TEMP = "temp_only"
 
 
 def init_task(task_name: str, source_dir: str, employees: list[str] = None,
@@ -44,64 +51,98 @@ def init_task(task_name: str, source_dir: str, employees: list[str] = None,
     return task_dir
 
 
-def clean_task(task_dir: Path, keep_exports: bool = True,
-               keep_receipts: bool = True) -> dict:
+def _delete_files_in_dir(dir_path: Path, removed: list, prefix: str,
+                         pattern: Optional[str] = None) -> None:
+    if not dir_path.exists():
+        return
+    for f in dir_path.iterdir():
+        if f.is_file():
+            if pattern and not f.match(pattern):
+                continue
+            removed.append(f"{prefix}/{f.name}")
+            try:
+                f.unlink()
+            except Exception:
+                pass
+
+
+def clean_task(task_dir: Path, mode: str = CLEAN_MODE_TEMP) -> dict:
     state = load_task_state(task_dir)
     removed = []
+    mode_description = ""
 
-    temp_dir = task_dir / TEMP_DIR
-    if temp_dir.exists():
-        for f in temp_dir.rglob("*"):
-            if f.is_file():
-                removed.append(f"temp/{f.name}")
-                try:
-                    f.unlink()
-                except Exception:
-                    pass
-
-    log_dir = task_dir / LOG_DIR
-    if log_dir.exists():
-        for f in log_dir.iterdir():
-            if f.suffix == ".tmp" or f.name.endswith(".bak"):
-                removed.append(f"logs/{f.name}")
-                try:
-                    f.unlink()
-                except Exception:
-                    pass
-
-    if not keep_exports:
+    if mode == CLEAN_MODE_EXPORTS:
+        mode_description = "仅清理导出文件"
         export_dir = task_dir / EXPORT_DIR
-        if export_dir.exists():
-            for f in export_dir.iterdir():
-                if f.is_file():
-                    removed.append(f"exports/{f.name}")
-                    try:
-                        f.unlink()
-                    except Exception:
-                        pass
+        _delete_files_in_dir(export_dir, removed, "exports")
         state.export_records = []
 
-    if not keep_receipts:
+    elif mode == CLEAN_MODE_OCR:
+        mode_description = "仅清理OCR识别结果"
+        for r_data in state.receipts:
+            r_data["ocr_text"] = ""
+            r_data["date"] = None
+            r_data["amount"] = None
+            r_data["employee"] = None
+            r_data["project"] = None
+            r_data["receipt_type"] = ReceiptType.OTHER.value
+            r_data["extraction_status"] = "待处理"
+            r_data["is_duplicate"] = False
+            r_data["duplicate_of"] = None
+            r_data["is_missing_attachment"] = False
+            r_data["missing_attachments"] = []
+            r_data["risk_level"] = "无"
+            r_data["risk_reason"] = ""
+            r_data["is_modified"] = False
+            r_data["field_modifications"] = []
+            r_data["description"] = None
+        state.groups = {}
+        state.status = TaskStatus.SCANNED.value
+        temp_dir = task_dir / TEMP_DIR
+        _delete_files_in_dir(temp_dir, removed, "temp")
+
+    elif mode == CLEAN_MODE_RESET:
+        mode_description = "完全重置为刚初始化状态"
+        export_dir = task_dir / EXPORT_DIR
+        _delete_files_in_dir(export_dir, removed, "exports")
         receipts_dir = task_dir / RECEIPTS_DIR
-        if receipts_dir.exists():
-            for f in receipts_dir.iterdir():
+        _delete_files_in_dir(receipts_dir, removed, "receipts")
+        temp_dir = task_dir / TEMP_DIR
+        _delete_files_in_dir(temp_dir, removed, "temp")
+        log_dir = task_dir / LOG_DIR
+        _delete_files_in_dir(log_dir, removed, "logs")
+        state.receipts = []
+        state.groups = {}
+        state.export_records = []
+        state.logs = []
+        state.status = TaskStatus.INIT.value
+        config = load_task_config(task_dir)
+        state.config = config.to_dict()
+
+    else:
+        mode_description = "仅清理临时文件"
+        temp_dir = task_dir / TEMP_DIR
+        if temp_dir.exists():
+            for f in temp_dir.rglob("*"):
                 if f.is_file():
-                    removed.append(f"receipts/{f.name}")
+                    removed.append(f"temp/{f.name}")
                     try:
                         f.unlink()
                     except Exception:
                         pass
-        state.receipts = []
-        state.groups = {}
-        state.status = TaskStatus.INIT.value
 
     save_task_state(task_dir, state)
 
     append_log(
         task_dir, "clean",
-        f"清理完成，删除 {len(removed)} 个文件 (keep_exports={keep_exports}, keep_receipts={keep_receipts})"
+        f"{mode_description}: 删除 {len(removed)} 个文件"
     )
-    return {"removed_count": len(removed), "removed_files": removed}
+    return {
+        "removed_count": len(removed),
+        "removed_files": removed,
+        "mode": mode,
+        "mode_description": mode_description,
+    }
 
 
 def get_config(task_dir: Path) -> dict:

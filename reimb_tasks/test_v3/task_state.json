@@ -1,0 +1,307 @@
+{
+  "task_id": "43e4a24b",
+  "task_name": "test_v3",
+  "status": "已扫描",
+  "config": {
+    "task_name": "test_v3",
+    "source_dir": "D:\\trae-bz\\TraeProjects\\1237\\test_source",
+    "employee_list": [
+      "张三",
+      "李四"
+    ],
+    "project_list": [
+      "差旅费",
+      "办公费"
+    ],
+    "project_keywords": [
+      {
+        "project": "差旅费",
+        "keywords": [
+          "差旅费"
+        ]
+      },
+      {
+        "project": "办公费",
+        "keywords": [
+          "办公费"
+        ]
+      }
+    ],
+    "attachment_rules": [
+      {
+        "receipt_type": "机票",
+        "required_attachments": [
+          "行程单",
+          "审批单"
+        ]
+      },
+      {
+        "receipt_type": "住宿费",
+        "required_attachments": [
+          "入住确认单",
+          "审批单"
+        ]
+      },
+      {
+        "receipt_type": "发票",
+        "required_attachments": [
+          "合同",
+          "审批单"
+        ]
+      }
+    ],
+    "month_filter": "2024-03",
+    "duplicate_threshold": 0.95,
+    "amount_warning_threshold": 5000.0,
+    "rule_version": 1
+  },
+  "receipts": [
+    {
+      "id": "8c24651315e7",
+      "filename": "receipt3.pdf",
+      "stored_filename": "receipt3.pdf",
+      "source_path": "D:\\trae-bz\\TraeProjects\\1237\\test_source\\receipt3.pdf",
+      "source_subdir": "",
+      "file_hash": "d663640088750cf16276d623c2588d7233f2b84b45f4b2e20832f47b16aa5618",
+      "file_type": "pdf",
+      "receipt_type": "其他",
+      "ocr_text": "",
+      "extraction_status": "待处理",
+      "extraction_error": "",
+      "date": null,
+      "amount": null,
+      "employee": null,
+      "project": null,
+      "description": null,
+      "is_duplicate": false,
+      "duplicate_of": null,
+      "is_missing_attachment": false,
+      "missing_attachments": [],
+      "risk_level": "无",
+      "risk_reason": "",
+      "is_modified": false,
+      "modified_fields": [
+        "date",
+        "amount",
+        "employee"
+      ],
+      "field_modifications": [],
+      "created_at": "2026-06-14T17:58:31.376830",
+      "extracted_at": "2026-06-14T17:59:22.879060",
+      "reviewed_at": "2026-06-14T17:59:59.819272"
+    },
+    {
+      "id": "a08dc95c1d74",
+      "filename": "receipt1.png",
+      "stored_filename": "办公费_receipt1.png",
+      "source_path": "D:\\trae-bz\\TraeProjects\\1237\\test_source\\办公费\\receipt1.png",
+      "source_subdir": "办公费",
+      "file_hash": "8019943bd82a5984b2b8adcdcf16f545051757437f695fa870d9200f4dc70dba",
+      "file_type": "image",
+      "receipt_type": "其他",
+      "ocr_text": "",
+      "extraction_status": "待处理",
+      "extraction_error": "",
+      "date": null,
+      "amount": null,
+      "employee": null,
+      "project": null,
+      "description": null,
+      "is_duplicate": false,
+      "duplicate_of": null,
+      "is_missing_attachment": false,
+      "missing_attachments": [],
+      "risk_level": "无",
+      "risk_reason": "",
+      "is_modified": false,
+      "modified_fields": [],
+      "field_modifications": [],
+      "created_at": "2026-06-14T17:58:31.378336",
+      "extracted_at": "2026-06-14T17:59:22.879564",
+      "reviewed_at": null
+    },
+    {
+      "id": "bbec9b508ec7",
+      "filename": "receipt1.png",
+      "stored_filename": "差旅费_receipt1.png",
+      "source_path": "D:\\trae-bz\\TraeProjects\\1237\\test_source\\差旅费\\receipt1.png",
+      "source_subdir": "差旅费",
+      "file_hash": "8019943bd82a5984b2b8adcdcf16f545051757437f695fa870d9200f4dc70dba",
+      "file_type": "image",
+      "receipt_type": "其他",
+      "ocr_text": "",
+      "extraction_status": "待处理",
+      "extraction_error": "",
+      "date": null,
+      "amount": null,
+      "employee": null,
+      "project": null,
+      "description": null,
+      "is_duplicate": false,
+      "duplicate_of": null,
+      "is_missing_attachment": false,
+      "missing_attachments": [],
+      "risk_level": "无",
+      "risk_reason": "",
+      "is_modified": false,
+      "modified_fields": [],
+      "field_modifications": [],
+      "created_at": "2026-06-14T17:58:31.379355",
+      "extracted_at": "2026-06-14T17:59:22.879564",
+      "reviewed_at": null
+    },
+    {
+      "id": "b273745bad49",
+      "filename": "receipt2.jpg",
+      "stored_filename": "差旅费_receipt2.jpg",
+      "source_path": "D:\\trae-bz\\TraeProjects\\1237\\test_source\\差旅费\\receipt2.jpg",
+      "source_subdir": "差旅费",
+      "file_hash": "b15da6cd177b04861b3e9b3e5bb3cfb96746f52bef1bd0e5c3ab2f30f2e9fa66",
+      "file_type": "image",
+      "receipt_type": "其他",
+      "ocr_text": "",
+      "extraction_status": "待处理",
+      "extraction_error": "",
+      "date": null,
+      "amount": null,
+      "employee": null,
+      "project": null,
+      "description": null,
+      "is_duplicate": false,
+      "duplicate_of": null,
+      "is_missing_attachment": false,
+      "missing_attachments": [],
+      "risk_level": "无",
+      "risk_reason": "",
+      "is_modified": false,
+      "modified_fields": [],
+      "field_modifications": [],
+      "created_at": "2026-06-14T17:58:31.381369",
+      "extracted_at": "2026-06-14T17:59:22.880074",
+      "reviewed_at": null
+    }
+  ],
+  "groups": {},
+  "logs": [
+    {
+      "timestamp": "2026-06-14T17:58:31.387432",
+      "action": "scan",
+      "detail": "扫描完成: 发现4个文件, 新增4个（扫描阶段未去重，重复票据将在check阶段标记）",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T17:59:22.886713",
+      "action": "extract",
+      "detail": "提取完成: 处理4个, 成功0个, 部分0个, 失败4个, 跳过0个",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T17:59:23.238027",
+      "action": "check",
+      "detail": "检查完成(规则v1): 重复1个, 缺附件0个, 高风险4个",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T17:59:59.164310",
+      "action": "review",
+      "detail": "修改 日期: None -> '2024-03-15'",
+      "receipt_id": "8c24651315e7",
+      "old_value": null,
+      "new_value": "2024-03-15",
+      "field": "date"
+    },
+    {
+      "timestamp": "2026-06-14T17:59:59.486931",
+      "action": "review",
+      "detail": "修改 金额: None -> 1500.5",
+      "receipt_id": "8c24651315e7",
+      "old_value": null,
+      "new_value": 1500.5,
+      "field": "amount"
+    },
+    {
+      "timestamp": "2026-06-14T17:59:59.825039",
+      "action": "review",
+      "detail": "修改 员工: None -> '张三'",
+      "receipt_id": "8c24651315e7",
+      "old_value": null,
+      "new_value": "张三",
+      "field": "employee"
+    },
+    {
+      "timestamp": "2026-06-14T18:00:33.429288",
+      "action": "check",
+      "detail": "检查完成(规则v1): 重复1个, 缺附件0个, 高风险3个",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T18:00:54.065412",
+      "action": "group",
+      "detail": "归类完成 (筛选月份: 2024-03): 共4张, 筛选后1张, 未分类:1张, 差旅费:0张, 办公费:0张",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T18:01:28.871557",
+      "action": "export",
+      "detail": "导出Excel: 报销清单_2024-03_20260614_180128.xlsx, 1条, ¥1,500.50",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T18:01:52.587219",
+      "action": "export",
+      "detail": "导出Excel: 报销清单_2024-03_20260614_180152.xlsx, 1条, ¥1,500.50",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T18:01:52.672124",
+      "action": "archive",
+      "detail": "月度归档完成: 1个月(2024-03), 生成 4 个文件",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T18:02:56.894628",
+      "action": "clean",
+      "detail": "仅清理导出文件: 删除 6 个文件",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    },
+    {
+      "timestamp": "2026-06-14T18:03:35.976658",
+      "action": "clean",
+      "detail": "仅清理OCR识别结果: 删除 0 个文件",
+      "receipt_id": null,
+      "old_value": null,
+      "new_value": null,
+      "field": null
+    }
+  ],
+  "export_records": [],
+  "created_at": "2026-06-14T17:57:43.380136",
+  "updated_at": "2026-06-14T18:03:35.976658"
+}

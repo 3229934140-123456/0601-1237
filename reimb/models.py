@@ -67,6 +67,8 @@ class ExportRecord:
     record_count: int = 0
     total_amount: float = 0.0
     month_filter: Optional[str] = None
+    operation: str = "export"
+    operator: str = "财务人员"
 
     def to_dict(self) -> dict:
         return asdict(self)
