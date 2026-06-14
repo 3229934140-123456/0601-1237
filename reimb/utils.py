@@ -285,11 +285,17 @@ def get_available_batches(export_records: list) -> list[dict]:
             op = er.get("operation", "export")
             ts = er.get("timestamp", "")
             mf = er.get("month_filter")
+            amt = er.get("total_amount", 0) or 0
+            rc = er.get("record_count", 0) or 0
+            oper = er.get("operator", "财务人员")
         else:
             bid = er.batch_id if hasattr(er, "batch_id") else ""
             op = er.operation if hasattr(er, "operation") else "export"
             ts = er.timestamp if hasattr(er, "timestamp") else ""
             mf = er.month_filter if hasattr(er, "month_filter") else None
+            amt = er.total_amount if hasattr(er, "total_amount") else 0
+            rc = er.record_count if hasattr(er, "record_count") else 0
+            oper = er.operator if hasattr(er, "operator") else "财务人员"
         if not bid:
             continue
         if bid not in batches:
@@ -297,22 +303,41 @@ def get_available_batches(export_records: list) -> list[dict]:
                 "batch_id": bid,
                 "operation": op,
                 "first_timestamp": ts,
-                "month_filter": mf,
+                "operator": oper,
+                "months": set(),
                 "file_count": 0,
                 "total_amount": 0.0,
                 "record_count": 0,
+                "monthly_summary": {},
             }
         batches[bid]["file_count"] += 1
-        if isinstance(er, dict):
-            amt = er.get("total_amount", 0) or 0
-            if amt > batches[bid]["total_amount"]:
-                batches[bid]["total_amount"] = amt
-            rc = er.get("record_count", 0) or 0
-            if rc > batches[bid]["record_count"]:
-                batches[bid]["record_count"] = rc
-        else:
-            if hasattr(er, "total_amount") and er.total_amount > batches[bid]["total_amount"]:
-                batches[bid]["total_amount"] = er.total_amount
-            if hasattr(er, "record_count") and er.record_count > batches[bid]["record_count"]:
-                batches[bid]["record_count"] = er.record_count
+        if amt > batches[bid]["total_amount"]:
+            batches[bid]["total_amount"] = amt
+        if rc > batches[bid]["record_count"]:
+            batches[bid]["record_count"] = rc
+        if mf:
+            batches[bid]["months"].add(mf)
+            if mf not in batches[bid]["monthly_summary"]:
+                batches[bid]["monthly_summary"][mf] = {
+                    "record_count": 0,
+                    "total_amount": 0.0,
+                    "file_count": 0,
+                }
+            batches[bid]["monthly_summary"][mf]["file_count"] += 1
+            if rc > batches[bid]["monthly_summary"][mf]["record_count"]:
+                batches[bid]["monthly_summary"][mf]["record_count"] = rc
+            if amt > batches[bid]["monthly_summary"][mf]["total_amount"]:
+                batches[bid]["monthly_summary"][mf]["total_amount"] = amt
+
+    for bid, data in batches.items():
+        data["months"] = sorted(data["months"])
+        data["month_filter"] = data["months"][0] if len(data["months"]) == 1 else None
+        data["month_range"] = f"{data['months'][0]}~{data['months'][-1]}" if len(data["months"]) > 1 else (data["months"][0] if data["months"] else "-")
+        if len(data["months"]) > 1:
+            total_records = sum(m["record_count"] for m in data["monthly_summary"].values())
+            total_amount = sum(m["total_amount"] for m in data["monthly_summary"].values())
+            data["record_count"] = total_records
+            data["total_amount"] = total_amount
+        del data["monthly_summary"]
+
     return sorted(batches.values(), key=lambda x: x["first_timestamp"], reverse=True)

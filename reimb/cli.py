@@ -474,14 +474,20 @@ def monthly_archive_cmd(task_name: str, month: Optional[str], fmt: str,
 @click.option("--status", "-s", "status_filter", default=None, help="按识别状态筛选查看 (成功/部分/失败/已修正)")
 @click.option("--batches", is_flag=True, help="列出所有导出批次")
 @click.option("--batch", "batch_id", default=None, help="按批次号回看该批次的所有文件")
+@click.option("--handover", is_flag=True, help="交接视图：按批次展示经办人、覆盖月份、文件状态")
+@click.option("--export-handover", is_flag=True, help="导出交接清单为CSV，方便交接核对")
+@click.option("--compare-batch1", default=None, help="批次对比：第一个批次号")
+@click.option("--compare-batch2", default=None, help="批次对比：第二个批次号")
 @click.option("--limit", "-n", default=50, help="日志条数限制")
 @click.option("--base-dir", "-b", default=None, help="任务存储根目录")
 def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
            value: Optional[str], logs: bool, history: bool,
            show_progress: bool, all_exports: bool,
            status_filter: Optional[str], batches: bool,
-           batch_id: Optional[str], limit: int, base_dir: Optional[str]):
-    """人工修正字段、查看日志、进度台账、修改历史、批次管理"""
+           batch_id: Optional[str], handover: bool, export_handover: bool,
+           compare_batch1: Optional[str], compare_batch2: Optional[str],
+           limit: int, base_dir: Optional[str]):
+    """人工修正字段、查看日志、进度台账、修改历史、批次管理、交接台账"""
     task_dir = _resolve_task_dir(task_name, base_dir)
 
     if receipt_id and field and value is not None:
@@ -585,6 +591,152 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
         console.print(table)
         return
 
+    if handover:
+        from .commands.review_cmd import get_handover_view
+        ho_data = get_handover_view(task_dir)
+
+        console.print(Panel(
+            f"[bold]交接台账概览[/bold]\n\n"
+            f"  任务名称: [cyan]{ho_data['task_name']}[/cyan]\n"
+            f"  票据总数: [bold]{ho_data['total_receipts']}[/bold]\n"
+            f"  总金额: [green]{format_amount(ho_data['total_amount'])}[/green]\n"
+            f"  高风险项: [red]{ho_data['high_risk']}[/red]\n"
+            f"  中风险项: [yellow]{ho_data['medium_risk']}[/yellow]\n"
+            f"  重复票据: [red]{ho_data['duplicates']}[/red]\n"
+            f"  缺附件: [red]{ho_data['missing_attachments']}[/red]\n"
+            f"  已修改: [blue]{ho_data['modified']}[/blue]",
+            title="交接视图",
+            border_style="green",
+        ))
+
+        op_labels = {
+            "export": "普通导出",
+            "export_month": "按月导出",
+            "archive_month": "月度归档",
+            "report": "汇总报告",
+        }
+        status_colors = {
+            "已完成": "green",
+            "待核对": "yellow",
+            "文件缺失": "red",
+        }
+
+        htable = Table(title="交接批次清单", show_lines=True, box=box.SQUARE)
+        htable.add_column("批次号", style="cyan bold", width=18)
+        htable.add_column("操作类型", style="yellow", width=10)
+        htable.add_column("经办人", style="blue", width=10)
+        htable.add_column("生成时间", style="dim", width=20)
+        htable.add_column("覆盖月份", style="magenta", width=14)
+        htable.add_column("文件数", style="bold", width=8)
+        htable.add_column("有效文件", style="green", width=10)
+        htable.add_column("票据数", style="dim", width=8)
+        htable.add_column("总金额", style="green", width=14)
+        htable.add_column("状态", style="bold", width=10)
+        htable.add_column("核对结论", style="dim", width=12)
+
+        for b in ho_data["batches"]:
+            op = op_labels.get(b["operation"], b["operation"])
+            status = b["status"]
+            color = status_colors.get(status, "white")
+            valid = b["valid_files"]
+            total = b["file_count"]
+            valid_str = f"[green]{valid}[/green]/[dim]{total}[/dim]" if valid == total else f"[red]{valid}[/red]/[dim]{total}[/dim]"
+            htable.add_row(
+                b["batch_id"], op, b["operator"],
+                b["timestamp"][:19], b["month_range"],
+                str(total), valid_str,
+                str(b["record_count"]),
+                format_amount(b["total_amount"]),
+                f"[{color}]{status}[/{color}]",
+                b["note"] or "[dim](待核对)[/dim]",
+            )
+        console.print(htable)
+        console.print("\n[dim]加 --export-handover 可导出CSV格式的交接清单[/dim]")
+        return
+
+    if export_handover:
+        from .commands.review_cmd import export_handover_list
+        fp = export_handover_list(task_dir)
+        console.print(Panel(
+            f"[green]✓ 交接清单已导出[/green]\n\n"
+            f"  文件: [bold]{fp.name}[/bold]\n"
+            f"  路径: [dim]{fp.resolve()}[/dim]",
+            title="导出完成",
+            border_style="green",
+        ))
+        return
+
+    if compare_batch1 and compare_batch2:
+        from .commands.review_cmd import compare_batches
+        result = compare_batches(task_dir, compare_batch1, compare_batch2)
+        if not result:
+            console.print("[red]错误: 找不到指定的批次[/red]")
+            return
+
+        op_labels = {
+            "export": "普通导出",
+            "export_month": "按月导出",
+            "archive_month": "月度归档",
+            "report": "汇总报告",
+        }
+        b1 = result["batch1"]
+        b2 = result["batch2"]
+
+        console.print(Panel(
+            f"[bold]批次对比[/bold]\n\n"
+            f"  [cyan]批次1: {b1['batch_id']}[/cyan] ({op_labels.get(b1['operation'], b1['operation'])})\n"
+            f"    时间: {b1['timestamp'][:19]}\n"
+            f"    月份: {b1['month_range']}\n"
+            f"    票据: {b1['record_count']} 张\n"
+            f"    金额: {format_amount(b1['total_amount'])}\n\n"
+            f"  [blue]批次2: {b2['batch_id']}[/blue] ({op_labels.get(b2['operation'], b2['operation'])})\n"
+            f"    时间: {b2['timestamp'][:19]}\n"
+            f"    月份: {b2['month_range']}\n"
+            f"    票据: {b2['record_count']} 张\n"
+            f"    金额: {format_amount(b2['total_amount'])}\n\n"
+            f"  [bold]差异汇总:[/bold]\n"
+            f"    票据数差: [{'green' if result['count_diff'] >= 0 else 'red'}]{result['count_diff']:+d} 张[/{'green' if result['count_diff'] >= 0 else 'red'}]\n"
+            f"    金额差: [{'green' if result['amount_diff'] >= 0 else 'red'}]{format_amount(result['amount_diff'])}[/{'green' if result['amount_diff'] >= 0 else 'red'}]\n"
+            f"    共同月份: {', '.join(result['common_months']) if result['common_months'] else '无'}",
+            title=f"批次对比: {compare_batch1} vs {compare_batch2}",
+            border_style="cyan",
+        ))
+
+        o1 = result["only_in_batch1"]
+        if o1["count"] > 0:
+            console.print(f"\n[yellow]⚠ 仅批次1有 ({o1['count']} 张, {format_amount(o1['total_amount'])}):[/yellow]")
+            for r in o1["receipts"][:10]:
+                risk = f" [{r['risk_level']}风险]" if r['risk_level'] != '无' else ""
+                console.print(f"  • {r['filename']} | {r['date']} | {format_amount(r['amount'])} | {r['employee'] or '-'} | {r['project'] or '-'}{risk}")
+            if len(o1["receipts"]) > 10:
+                console.print(f"  [dim]... 还有 {len(o1['receipts']) - 10} 张[/dim]")
+
+        o2 = result["only_in_batch2"]
+        if o2["count"] > 0:
+            console.print(f"\n[green]✓ 仅批次2有 ({o2['count']} 张, {format_amount(o2['total_amount'])}):[/green]")
+            for r in o2["receipts"][:10]:
+                risk = f" [{r['risk_level']}风险]" if r['risk_level'] != '无' else ""
+                console.print(f"  • {r['filename']} | {r['date']} | {format_amount(r['amount'])} | {r['employee'] or '-'} | {r['project'] or '-'}{risk}")
+            if len(o2["receipts"]) > 10:
+                console.print(f"  [dim]... 还有 {len(o2['receipts']) - 10} 张[/dim]")
+
+        if result["changed_receipts"]:
+            console.print(f"\n[blue]✎ 共同票据中有修改记录 ({len(result['changed_receipts'])} 张):[/blue]")
+            for cr in result["changed_receipts"][:10]:
+                console.print(f"  • {cr['filename']}")
+                for mod in cr["modifications"]:
+                    console.print(f"    - {mod.get('field')}: {mod.get('old_value')!r} → {mod.get('new_value')!r} @ {mod.get('timestamp', '')[:19]}")
+            if len(result["changed_receipts"]) > 10:
+                console.print(f"  [dim]... 还有 {len(result['changed_receipts']) - 10} 张[/dim]")
+
+        if result["only_in_batch1"]["count"] == 0 and result["only_in_batch2"]["count"] == 0 and not result["changed_receipts"]:
+            console.print("\n[green]✓ 两批次内容完全一致，无差异[/green]")
+        return
+
+    if compare_batch1 or compare_batch2:
+        console.print("[red]错误: 批次对比需要同时指定 --compare-batch1 和 --compare-batch2[/red]")
+        return
+
     if batches:
         batch_list = list_batches(task_dir)
         if not batch_list:
@@ -598,12 +750,13 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
         }
         table = Table(title=f"批次列表 (共{len(batch_list)}个)", show_lines=True, box=box.SQUARE)
         table.add_column("批次号", style="cyan bold", width=18)
-        table.add_column("操作类型", style="yellow", width=14)
+        table.add_column("操作类型", style="yellow", width=10)
+        table.add_column("经办人", style="blue", width=10)
         table.add_column("文件数", style="bold", width=8)
         table.add_column("有效文件", style="green", width=10)
         table.add_column("票据数", style="dim", width=8)
         table.add_column("总金额", style="green", width=14)
-        table.add_column("月份", style="blue", width=10)
+        table.add_column("覆盖月份", style="magenta", width=14)
         table.add_column("生成时间", style="dim", width=20)
         for b in batch_list:
             op = op_labels.get(b.get("operation", ""), b.get("operation", ""))
@@ -611,10 +764,11 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
             total = b.get("file_count", 0)
             valid_str = f"[green]{valid}[/green]/[dim]{total}[/dim]" if valid == total else f"[yellow]{valid}[/yellow]/[dim]{total}[/dim]"
             table.add_row(
-                b.get("batch_id", ""), op, str(total), valid_str,
+                b.get("batch_id", ""), op, b.get("operator", "财务人员"),
+                str(total), valid_str,
                 str(b.get("record_count", 0)),
                 format_amount(b.get("total_amount", 0)),
-                b.get("month_filter") or "-",
+                b.get("month_range", "-"),
                 b.get("first_timestamp", "")[:19],
             )
         console.print(table)
@@ -633,12 +787,13 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
             "report": "汇总报告",
         }
         op = op_labels.get(batch_data.get("operation", ""), batch_data.get("operation", ""))
-        m = batch_data.get("month_filter") or "-"
+        m_range = batch_data.get("month_range", "-")
 
         console.print(Panel(
             f"批次号: [bold]{batch_data['batch_id']}[/bold]\n"
             f"操作: [yellow]{op}[/yellow]\n"
-            f"月份: [blue]{m}[/blue]\n"
+            f"经办人: [blue]{batch_data.get('operator', '财务人员')}[/blue]\n"
+            f"覆盖月份: [magenta]{m_range}[/magenta]\n"
             f"文件数: {batch_data['valid_files']}/{batch_data['record_count']} 有效\n"
             f"票据数: {batch_data['record_count_receipt']}\n"
             f"总金额: [green]{format_amount(batch_data['total_amount'])}[/green]\n"
@@ -647,10 +802,32 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
             border_style="cyan",
         ))
 
+        monthly = batch_data.get("monthly_breakdown", {})
+        if len(monthly) > 1:
+            mtable = Table(title="按月份拆分", show_lines=True, box=box.SQUARE, width=80)
+            mtable.add_column("月份", style="cyan", width=12)
+            mtable.add_column("票据数", style="bold", width=10)
+            mtable.add_column("总金额", style="green", width=14)
+            mtable.add_column("文件数", style="dim", width=10)
+            mtable.add_column("有效文件", style="green", width=10)
+            for m, info in sorted(monthly.items()):
+                valid = info["valid_files"]
+                total = info["file_count"]
+                valid_str = f"[green]{valid}[/green]/[dim]{total}[/dim]" if valid == total else f"[yellow]{valid}[/yellow]/[dim]{total}[/dim]"
+                mtable.add_row(
+                    m,
+                    str(info["record_count"]),
+                    format_amount(info["total_amount"]),
+                    str(total),
+                    valid_str,
+                )
+            console.print(mtable)
+
         etable = Table(title="批次文件清单", show_lines=True, box=box.SQUARE)
         etable.add_column("状态", style="dim", width=8)
         etable.add_column("类型", style="green", width=12)
         etable.add_column("格式", style="magenta", width=8)
+        etable.add_column("月份", style="blue", width=10)
         etable.add_column("文件名", style="white")
         etable.add_column("完整路径", style="dim")
         for rec in batch_data["records"]:
@@ -660,6 +837,7 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
                 status,
                 rec.get("export_type", ""),
                 rec.get("format", "").upper(),
+                rec.get("month_filter") or "-",
                 fp.name,
                 str(fp.resolve()) if fp.exists() else rec.get("filepath", ""),
             )
@@ -726,7 +904,7 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
         etable = Table(title=title, show_lines=True, box=box.SQUARE)
         etable.add_column("状态", style="dim", width=8)
         etable.add_column("批次号", style="cyan", width=18)
-        etable.add_column("操作类型", style="yellow", width=10)
+        etable.add_column("操作类型", style="yellow", width=12)
         etable.add_column("类型", style="green", width=12)
         etable.add_column("格式", style="magenta", width=8)
         etable.add_column("月份", style="blue", width=10)

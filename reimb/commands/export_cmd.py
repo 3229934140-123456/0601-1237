@@ -408,9 +408,11 @@ def export_by_month(task_dir: Path, fmt: str = "excel",
 
     for month in months:
         if fmt.lower() == "csv":
-            fp = export_to_csv(task_dir, month_filter=month, batch_id=batch_id)
+            fp = export_to_csv(task_dir, month_filter=month, batch_id=batch_id,
+                              operation="export_month")
         else:
-            fp = export_to_excel(task_dir, month_filter=month, batch_id=batch_id)
+            fp = export_to_excel(task_dir, month_filter=month, batch_id=batch_id,
+                                operation="export_month")
         month_receipts = [r for r in receipts if r.date and r.date.startswith(month)]
         month_amount = sum(r.amount or 0 for r in month_receipts)
         exported.append({
