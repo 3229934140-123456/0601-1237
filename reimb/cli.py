@@ -23,10 +23,11 @@ from .commands.extract_cmd import extract_receipts
 from .commands.check_cmd import check_receipts
 from .commands.group_cmd import group_receipts
 from .commands.export_cmd import export_to_excel, export_to_csv, generate_report, export_by_month
-from .commands.archive_cmd import monthly_archive
+from .commands.archive_cmd import monthly_archive, preview_monthly_archive
 from .commands.review_cmd import (
     modify_field, view_progress, get_logs, get_modification_history,
     list_receipts_by_status, ALL_EDITABLE_FIELDS, FIELD_LABELS,
+    get_batch_records, list_batches,
 )
 from .commands.rule_cmd import (
     get_current_rules, set_amount_threshold, set_duplicate_threshold,
@@ -291,8 +292,10 @@ def group(task_name: str, month: Optional[str], regroup: bool, base_dir: Optiona
 @click.option("--report", "-r", is_flag=True, help="同时生成汇总报告")
 @click.option("--month", "-m", default=None, help="按月份导出 (格式: YYYY-MM)")
 @click.option("--by-month", is_flag=True, help="按月份批量导出")
+@click.option("--use-stored-month", is_flag=True, help="使用任务中保存的月份筛选")
 @click.option("--base-dir", "-b", default=None, help="任务存储根目录")
-def export(task_name: str, fmt: str, report: bool, month: Optional[str], by_month: bool, base_dir: Optional[str]):
+def export(task_name: str, fmt: str, report: bool, month: Optional[str],
+           by_month: bool, use_stored_month: bool, base_dir: Optional[str]):
     """导出报销清单表格，支持按月份导出，生成汇总报告"""
     task_dir = _resolve_task_dir(task_name, base_dir)
 
@@ -305,9 +308,10 @@ def export(task_name: str, fmt: str, report: bool, month: Optional[str], by_mont
         if result["exported"] == 0:
             console.print("[yellow]⚠ 没有可导出的月份数据（票据缺少日期字段）[/yellow]")
         else:
-            console.print(f"[green]✓ 按月导出完成，共 {result['exported']} 个月:[/green]")
+            bid = result.get("batch_id", "")
+            console.print(f"[green]✓ 按月导出完成，共 {result['exported']} 个月 (批次 {bid}):[/green]")
             for f in result["files"]:
-                m = f.get("month_filter", "") or "-"
+                m = f.get("month", "") or "-"
                 fp = Path(f.get("filepath", ""))
                 console.print(
                     f"  • {m}\n"
@@ -317,18 +321,27 @@ def export(task_name: str, fmt: str, report: bool, month: Optional[str], by_mont
                 )
         return
 
+    active_month = month
+    if active_month is None and use_stored_month:
+        config = load_task_config(task_dir)
+        active_month = config.month_filter
+
+    from .commands.export_cmd import create_batch_id
+    batch_id = create_batch_id(task_dir)
+
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         task = progress.add_task("正在导出数据...", total=None)
         if fmt == "csv":
-            filepath = export_to_csv(task_dir, month_filter=month)
+            filepath = export_to_csv(task_dir, month_filter=active_month, batch_id=batch_id)
         else:
-            filepath = export_to_excel(task_dir, month_filter=month)
+            filepath = export_to_excel(task_dir, month_filter=active_month, batch_id=batch_id)
         progress.update(task, completed=True)
 
-    month_label = f" ({month})" if month else ""
+    month_label = f" ({active_month})" if active_month else ""
     fp = Path(filepath)
     console.print(Panel(
         f"[green]✓ 报销清单已导出{month_label}[/green]\n\n"
+        f"  批次号:   [bold]{batch_id}[/bold]\n"
         f"  文件名称: [bold]{fp.name}[/bold]\n"
         f"  完整路径: [dim]{filepath.resolve()}[/dim]",
         title="导出完成",
@@ -338,11 +351,12 @@ def export(task_name: str, fmt: str, report: bool, month: Optional[str], by_mont
     if report:
         with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
             task = progress.add_task("正在生成汇总报告...", total=None)
-            report_path = generate_report(task_dir, month_filter=month)
+            report_path = generate_report(task_dir, month_filter=active_month, batch_id=batch_id)
             progress.update(task, completed=True)
         rp = Path(report_path)
         console.print(Panel(
             f"[green]✓ 汇总报告已生成[/green]\n\n"
+            f"  批次号:   [bold]{batch_id}[/bold]\n"
             f"  文件名称: [bold]{rp.name}[/bold]\n"
             f"  完整路径: [dim]{report_path.resolve()}[/dim]",
             title="报告完成",
@@ -355,10 +369,64 @@ def export(task_name: str, fmt: str, report: bool, month: Optional[str], by_mont
 @click.option("--month", "-m", default=None, help="指定月份归档 (格式: YYYY-MM)，不指定则按月批量归档")
 @click.option("--format", "-f", "fmt", type=click.Choice(["excel", "csv"]), default="excel", help="清单格式")
 @click.option("--no-zip", is_flag=True, help="不生成打包zip")
+@click.option("--preview", "-p", is_flag=True, help="预览模式：只统计不生成文件")
+@click.option("--yes", "-y", is_flag=True, help="跳过确认直接生成")
 @click.option("--base-dir", "-b", default=None, help="任务存储根目录")
-def monthly_archive_cmd(task_name: str, month: Optional[str], fmt: str, no_zip: bool, base_dir: Optional[str]):
+def monthly_archive_cmd(task_name: str, month: Optional[str], fmt: str,
+                        no_zip: bool, preview: bool, yes: bool, base_dir: Optional[str]):
     """📦 按月归档：一次生成当月清单、风险说明、汇总报告，可选打包zip"""
     task_dir = _resolve_task_dir(task_name, base_dir)
+
+    if preview:
+        result = preview_monthly_archive(task_dir, month=month)
+        if result["preview_count"] == 0:
+            console.print("[yellow]⚠ 没有可归档的月份数据（票据缺少日期字段）[/yellow]")
+            return
+
+        console.print(Panel(
+            f"共 {result['preview_count']} 个月份待归档 (任务总计 {result['total_receipts']} 张)",
+            title="归档预览",
+            border_style="cyan",
+        ))
+
+        for pv in result["previews"]:
+            m = pv.get("month") or "全部"
+            console.print(f"\n[bold]📅 {m}[/bold]")
+            stat_table = Table(show_header=False, box=box.SIMPLE, width=70)
+            stat_table.add_column("项", style="cyan", width=16)
+            stat_table.add_column("值", style="bold")
+            stat_table.add_row("票据数", str(pv["receipt_count"]))
+            stat_table.add_row("总金额", format_amount(pv["total_amount"]))
+            stat_table.add_row("高风险", f"[red]{pv['high_risk']}[/red]" if pv["high_risk"] else "0")
+            stat_table.add_row("中风险", f"[yellow]{pv['medium_risk']}[/yellow]" if pv["medium_risk"] else "0")
+            stat_table.add_row("重复票据", str(pv["duplicates"]))
+            stat_table.add_row("缺附件", str(pv["missing_attachments"]))
+            stat_table.add_row("已修改", str(pv["modified"]))
+            console.print(stat_table)
+
+            console.print("\n[dim]将生成文件:[/dim]")
+            for label, ftype in pv["files_to_generate"]:
+                if ftype == "ZIP" and no_zip:
+                    continue
+                console.print(f"  • {label} ({ftype})")
+        console.print(f"\n[cyan]加 --yes 或不带 --preview 执行即可实际生成[/cyan]")
+        return
+
+    if not yes:
+        preview_data = preview_monthly_archive(task_dir, month=month)
+        if preview_data["preview_count"] == 0:
+            console.print("[yellow]⚠ 没有可归档的月份数据（票据缺少日期字段）[/yellow]")
+            return
+
+        console.print(Panel(
+            f"即将归档 {preview_data['preview_count']} 个月份，"
+            f"共 {preview_data['total_receipts']} 张票据",
+            title="确认归档",
+            border_style="yellow",
+        ))
+        if not click.confirm("确认执行归档？"):
+            console.print("[yellow]已取消[/yellow]")
+            return
 
     desc = "正在生成月度归档..."
     if month:
@@ -372,8 +440,10 @@ def monthly_archive_cmd(task_name: str, month: Optional[str], fmt: str, no_zip: 
         console.print("[yellow]⚠ 没有可归档的月份数据（票据缺少日期字段）[/yellow]")
         return
 
+    bid = result.get("batch_id", "")
     console.print(Panel(
         f"[green]✓ 月度归档完成[/green]\n\n"
+        f"  批次号:   [bold]{bid}[/bold]\n"
         f"  归档月份数: [bold]{result['archive_count']}[/bold]\n"
         f"  生成文件数: [bold]{result['total_files']}[/bold]",
         title="月度归档",
@@ -402,13 +472,16 @@ def monthly_archive_cmd(task_name: str, month: Optional[str], fmt: str, no_zip: 
 @click.option("--progress", "-p", "show_progress", is_flag=True, help="查看任务进度和台账")
 @click.option("--all-exports", "-a", is_flag=True, help="进度中显示全部导出记录")
 @click.option("--status", "-s", "status_filter", default=None, help="按识别状态筛选查看 (成功/部分/失败/已修正)")
+@click.option("--batches", is_flag=True, help="列出所有导出批次")
+@click.option("--batch", "batch_id", default=None, help="按批次号回看该批次的所有文件")
 @click.option("--limit", "-n", default=50, help="日志条数限制")
 @click.option("--base-dir", "-b", default=None, help="任务存储根目录")
 def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
            value: Optional[str], logs: bool, history: bool,
            show_progress: bool, all_exports: bool,
-           status_filter: Optional[str], limit: int, base_dir: Optional[str]):
-    """人工修正字段、查看日志、进度台账、修改历史"""
+           status_filter: Optional[str], batches: bool,
+           batch_id: Optional[str], limit: int, base_dir: Optional[str]):
+    """人工修正字段、查看日志、进度台账、修改历史、批次管理"""
     task_dir = _resolve_task_dir(task_name, base_dir)
 
     if receipt_id and field and value is not None:
@@ -512,6 +585,87 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
         console.print(table)
         return
 
+    if batches:
+        batch_list = list_batches(task_dir)
+        if not batch_list:
+            console.print("[yellow]暂无导出批次记录[/yellow]")
+            return
+        op_labels = {
+            "export": "普通导出",
+            "export_month": "按月导出",
+            "archive_month": "月度归档",
+            "report": "汇总报告",
+        }
+        table = Table(title=f"批次列表 (共{len(batch_list)}个)", show_lines=True, box=box.SQUARE)
+        table.add_column("批次号", style="cyan bold", width=18)
+        table.add_column("操作类型", style="yellow", width=14)
+        table.add_column("文件数", style="bold", width=8)
+        table.add_column("有效文件", style="green", width=10)
+        table.add_column("票据数", style="dim", width=8)
+        table.add_column("总金额", style="green", width=14)
+        table.add_column("月份", style="blue", width=10)
+        table.add_column("生成时间", style="dim", width=20)
+        for b in batch_list:
+            op = op_labels.get(b.get("operation", ""), b.get("operation", ""))
+            valid = b.get("valid_files", 0)
+            total = b.get("file_count", 0)
+            valid_str = f"[green]{valid}[/green]/[dim]{total}[/dim]" if valid == total else f"[yellow]{valid}[/yellow]/[dim]{total}[/dim]"
+            table.add_row(
+                b.get("batch_id", ""), op, str(total), valid_str,
+                str(b.get("record_count", 0)),
+                format_amount(b.get("total_amount", 0)),
+                b.get("month_filter") or "-",
+                b.get("first_timestamp", "")[:19],
+            )
+        console.print(table)
+        console.print("\n[dim]使用 reimb review <任务> --batch <批次号> 查看批次详情[/dim]")
+        return
+
+    if batch_id:
+        batch_data = get_batch_records(task_dir, batch_id)
+        if not batch_data:
+            console.print(f"[red]错误: 找不到批次 {batch_id}[/red]")
+            return
+        op_labels = {
+            "export": "普通导出",
+            "export_month": "按月导出",
+            "archive_month": "月度归档",
+            "report": "汇总报告",
+        }
+        op = op_labels.get(batch_data.get("operation", ""), batch_data.get("operation", ""))
+        m = batch_data.get("month_filter") or "-"
+
+        console.print(Panel(
+            f"批次号: [bold]{batch_data['batch_id']}[/bold]\n"
+            f"操作: [yellow]{op}[/yellow]\n"
+            f"月份: [blue]{m}[/blue]\n"
+            f"文件数: {batch_data['valid_files']}/{batch_data['record_count']} 有效\n"
+            f"票据数: {batch_data['record_count_receipt']}\n"
+            f"总金额: [green]{format_amount(batch_data['total_amount'])}[/green]\n"
+            f"生成时间: [dim]{batch_data['first_timestamp'][:19]}[/dim]",
+            title=f"批次详情 - {batch_data['batch_id']}",
+            border_style="cyan",
+        ))
+
+        etable = Table(title="批次文件清单", show_lines=True, box=box.SQUARE)
+        etable.add_column("状态", style="dim", width=8)
+        etable.add_column("类型", style="green", width=12)
+        etable.add_column("格式", style="magenta", width=8)
+        etable.add_column("文件名", style="white")
+        etable.add_column("完整路径", style="dim")
+        for rec in batch_data["records"]:
+            status = "[green]存在[/green]" if rec.get("file_exists") else "[red]已删除[/red]"
+            fp = Path(rec.get("filepath", ""))
+            etable.add_row(
+                status,
+                rec.get("export_type", ""),
+                rec.get("format", "").upper(),
+                fp.name,
+                str(fp.resolve()) if fp.exists() else rec.get("filepath", ""),
+            )
+        console.print(etable)
+        return
+
     progress_data = view_progress(task_dir, include_all_exports=all_exports)
 
     console.print(Panel(
@@ -562,9 +716,16 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
     if progress_data.get("export_records"):
         cnt = progress_data["total_exports"]
         shown = len(progress_data["export_records"])
-        title = f"导出台账 (显示{shown}/{cnt}个，加 -a 看全部)"
+        valid = progress_data.get("valid_exports", 0)
+        missing = progress_data.get("missing_exports", 0)
+        title_parts = [f"导出台账 (显示{shown}/{cnt}个"]
+        if missing > 0:
+            title_parts.append(f"，{valid}有效/{missing}已失效")
+        title_parts.append("，加 -a 看全部)")
+        title = "".join(title_parts)
         etable = Table(title=title, show_lines=True, box=box.SQUARE)
-        etable.add_column("时间", style="cyan", width=22)
+        etable.add_column("状态", style="dim", width=8)
+        etable.add_column("批次号", style="cyan", width=18)
         etable.add_column("操作类型", style="yellow", width=10)
         etable.add_column("类型", style="green", width=12)
         etable.add_column("格式", style="magenta", width=8)
@@ -577,17 +738,22 @@ def review(task_name: str, receipt_id: Optional[str], field: Optional[str],
             fp = Path(er.get("filepath", ""))
             op_label = er.get("operation_label", "导出")
             m = er.get("month_filter") or "-"
+            exists = er.get("file_exists", True)
+            status = "[green]✓[/green]" if exists else "[red]✗[/red]"
+            bid = er.get("batch_id", "") or "[dim]-[/dim]"
             etable.add_row(
-                er.get("timestamp", "")[:19],
+                status, bid,
                 op_label,
                 er.get("export_type", ""),
                 er.get("format", "").upper(),
                 m,
                 str(er.get("record_count", 0)),
                 format_amount(er.get("total_amount", 0)),
-                str(fp.resolve()) if fp.exists() else er.get("filepath", ""),
+                str(fp.resolve()) if exists else f"[strike]{er.get('filepath', '')}[/strike]",
             )
         console.print(etable)
+        if missing > 0:
+            console.print(f"[dim]有 {missing} 个文件已被删除，记录仍保留可追溯[/dim]")
 
     if progress_data["modified"] > 0:
         console.print(f"\n[yellow]⚠ 有 {progress_data['modified']} 张票据被人工修改，请重新运行 check 和 group[/yellow]")

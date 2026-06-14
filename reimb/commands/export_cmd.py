@@ -6,27 +6,42 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from ..config import load_task_state, load_task_config, EXPORT_DIR, append_log
+from ..config import load_task_state, save_task_state, load_task_config, EXPORT_DIR, append_log
 from ..models import Receipt, TaskStatus, ExportRecord
-from ..utils import format_amount
+from ..utils import format_amount, generate_batch_id
 
 
-def _add_export_record(task_dir: Path, export_record: ExportRecord) -> None:
+def create_batch_id(task_dir: Path) -> str:
+    state = load_task_state(task_dir)
+    state.batch_counter += 1
+    bid = generate_batch_id(state.batch_counter)
+    save_task_state(task_dir, state)
+    return bid
+
+
+def _add_export_record(task_dir: Path, export_record: ExportRecord,
+                       batch_id: Optional[str] = None) -> None:
     from ..config import load_task_state, save_task_state
     state = load_task_state(task_dir)
+    if batch_id:
+        export_record.batch_id = batch_id
     state.export_records.append(export_record)
     state.status = TaskStatus.EXPORTED.value
     save_task_state(task_dir, state)
 
 
-def export_to_csv(task_dir: Path, month_filter: Optional[str] = None) -> Path:
+def export_to_csv(task_dir: Path, month_filter: Optional[str] = None,
+                  batch_id: Optional[str] = None, use_stored_month: bool = False,
+                  operation: str = "export") -> Path:
     state = load_task_state(task_dir)
     config = load_task_config(task_dir)
     export_dir = task_dir / EXPORT_DIR
     export_dir.mkdir(parents=True, exist_ok=True)
 
     receipts = [Receipt.from_dict(r) for r in state.receipts]
-    active_month = month_filter if month_filter else config.month_filter
+    active_month = month_filter
+    if active_month is None and use_stored_month and config.month_filter:
+        active_month = config.month_filter
     if active_month:
         receipts = [r for r in receipts if r.date and r.date.startswith(active_month)]
 
@@ -63,18 +78,22 @@ def export_to_csv(task_dir: Path, month_filter: Optional[str] = None) -> Path:
         record_count=len(receipts),
         total_amount=total_amount,
         month_filter=active_month,
+        operation=operation,
     )
-    _add_export_record(task_dir, record)
+    _add_export_record(task_dir, record, batch_id=batch_id)
     append_log(task_dir, "export", f"导出CSV: {filepath.name}, {len(receipts)}条, {format_amount(total_amount)}")
     return filepath
 
 
-def export_to_excel(task_dir: Path, month_filter: Optional[str] = None) -> Path:
+def export_to_excel(task_dir: Path, month_filter: Optional[str] = None,
+                    batch_id: Optional[str] = None, use_stored_month: bool = False,
+                    operation: str = "export") -> Path:
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     except ImportError:
-        return export_to_csv(task_dir, month_filter=month_filter)
+        return export_to_csv(task_dir, month_filter=month_filter, batch_id=batch_id,
+                            use_stored_month=use_stored_month, operation=operation)
 
     state = load_task_state(task_dir)
     config = load_task_config(task_dir)
@@ -82,7 +101,9 @@ def export_to_excel(task_dir: Path, month_filter: Optional[str] = None) -> Path:
     export_dir.mkdir(parents=True, exist_ok=True)
 
     receipts = [Receipt.from_dict(r) for r in state.receipts]
-    active_month = month_filter if month_filter else config.month_filter
+    active_month = month_filter
+    if active_month is None and use_stored_month and config.month_filter:
+        active_month = config.month_filter
     if active_month:
         receipts = [r for r in receipts if r.date and r.date.startswith(active_month)]
 
@@ -245,20 +266,25 @@ def export_to_excel(task_dir: Path, month_filter: Optional[str] = None) -> Path:
         record_count=len(receipts),
         total_amount=total_amount,
         month_filter=active_month,
+        operation=operation,
     )
-    _add_export_record(task_dir, record)
+    _add_export_record(task_dir, record, batch_id=batch_id)
     append_log(task_dir, "export", f"导出Excel: {filepath.name}, {len(receipts)}条, {format_amount(total_amount)}")
     return filepath
 
 
-def generate_report(task_dir: Path, month_filter: Optional[str] = None) -> Path:
+def generate_report(task_dir: Path, month_filter: Optional[str] = None,
+                    batch_id: Optional[str] = None, use_stored_month: bool = False,
+                    operation: str = "export") -> Path:
     state = load_task_state(task_dir)
     config = load_task_config(task_dir)
     export_dir = task_dir / EXPORT_DIR
     export_dir.mkdir(parents=True, exist_ok=True)
 
     receipts = [Receipt.from_dict(r) for r in state.receipts]
-    active_month = month_filter if month_filter else config.month_filter
+    active_month = month_filter
+    if active_month is None and use_stored_month and config.month_filter:
+        active_month = config.month_filter
     if active_month:
         receipts = [r for r in receipts if r.date and r.date.startswith(active_month)]
 
@@ -359,13 +385,15 @@ def generate_report(task_dir: Path, month_filter: Optional[str] = None) -> Path:
         record_count=total_count,
         total_amount=total_amount,
         month_filter=active_month,
+        operation=operation,
     )
-    _add_export_record(task_dir, record)
+    _add_export_record(task_dir, record, batch_id=batch_id)
     append_log(task_dir, "export", f"生成汇总报告: {filepath.name}")
     return filepath
 
 
-def export_by_month(task_dir: Path, fmt: str = "excel") -> dict:
+def export_by_month(task_dir: Path, fmt: str = "excel",
+                    create_batch: bool = True) -> dict:
     state = load_task_state(task_dir)
     receipts = [Receipt.from_dict(r) for r in state.receipts]
 
@@ -374,11 +402,23 @@ def export_by_month(task_dir: Path, fmt: str = "excel") -> dict:
         return {"exported": 0, "months": []}
 
     exported = []
+    batch_id = None
+    if create_batch:
+        batch_id = create_batch_id(task_dir)
+
     for month in months:
         if fmt.lower() == "csv":
-            fp = export_to_csv(task_dir, month_filter=month)
+            fp = export_to_csv(task_dir, month_filter=month, batch_id=batch_id)
         else:
-            fp = export_to_excel(task_dir, month_filter=month)
-        exported.append({"month": month, "filepath": str(fp)})
+            fp = export_to_excel(task_dir, month_filter=month, batch_id=batch_id)
+        month_receipts = [r for r in receipts if r.date and r.date.startswith(month)]
+        month_amount = sum(r.amount or 0 for r in month_receipts)
+        exported.append({
+            "month": month,
+            "filepath": str(fp),
+            "record_count": len(month_receipts),
+            "total_amount": month_amount,
+            "batch_id": batch_id,
+        })
 
-    return {"exported": len(exported), "months": months, "files": exported}
+    return {"exported": len(exported), "months": months, "files": exported, "batch_id": batch_id}

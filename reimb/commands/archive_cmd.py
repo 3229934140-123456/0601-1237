@@ -11,7 +11,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 from ..config import (
-    load_task_state, save_task_state, load_task_config, save_task_config,
+    load_task_state, save_task_state, load_task_config,
     EXPORT_DIR, append_log,
 )
 from ..models import Receipt, TaskStatus, ExportRecord
@@ -19,12 +19,14 @@ from ..utils import format_amount, group_by_project
 from ..commands.export_cmd import (
     export_to_excel as export_excel_full,
     export_to_csv as export_csv_full,
-    _add_export_record,
+    _add_export_record, create_batch_id,
 )
 
 
 def _generate_risk_report(task_dir: Path, receipts: list[Receipt],
-                          month_filter: Optional[str]) -> Path:
+                          month_filter: Optional[str],
+                          batch_id: Optional[str] = None,
+                          operation: str = "archive_month") -> Path:
     export_dir = task_dir / EXPORT_DIR
     export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -174,11 +176,25 @@ def _generate_risk_report(task_dir: Path, receipts: list[Receipt],
                 cell.alignment = Alignment(horizontal="center")
 
     wb.save(filepath)
+
+    record = ExportRecord(
+        export_type="风险说明",
+        format="excel",
+        filepath=str(filepath),
+        record_count=len(receipts),
+        total_amount=sum(r.amount or 0 for r in receipts),
+        month_filter=month_filter,
+        operation=operation,
+    )
+    _add_export_record(task_dir, record, batch_id=batch_id)
+
     return filepath
 
 
 def _generate_summary_report(task_dir: Path, receipts: list[Receipt],
-                             month_filter: Optional[str]) -> Path:
+                             month_filter: Optional[str],
+                             batch_id: Optional[str] = None,
+                             operation: str = "archive_month") -> Path:
     export_dir = task_dir / EXPORT_DIR
     export_dir.mkdir(parents=True, exist_ok=True)
 
@@ -208,6 +224,8 @@ def _generate_summary_report(task_dir: Path, receipts: list[Receipt],
     md_content.append(f"**生成时间**: {now_str}")
     md_content.append(f"**统计范围**: {month_desc}")
     md_content.append(f"**规则版本**: v{config.rule_version}")
+    if batch_id:
+        md_content.append(f"**批次号**: {batch_id}")
     md_content.append("")
     md_content.append("## 📊 总体概览")
     md_content.append("")
@@ -270,18 +288,24 @@ def _generate_summary_report(task_dir: Path, receipts: list[Receipt],
     with open(filepath, "w", encoding="utf-8") as f:
         f.write("\n".join(md_content))
 
+    record = ExportRecord(
+        export_type="汇总报告",
+        format="markdown",
+        filepath=str(filepath),
+        record_count=total_count,
+        total_amount=total_amount,
+        month_filter=month_filter,
+        operation=operation,
+    )
+    _add_export_record(task_dir, record, batch_id=batch_id)
+
     return filepath
 
 
-def monthly_archive(task_dir: Path, month: Optional[str] = None,
-                    fmt: str = "excel", create_zip: bool = True) -> dict:
+def preview_monthly_archive(task_dir: Path, month: Optional[str] = None) -> dict:
+    """预览月度归档：只统计不生成文件"""
     state = load_task_state(task_dir)
-    config = load_task_config(task_dir)
     all_receipts = [Receipt.from_dict(r) for r in state.receipts]
-
-    if month:
-        config.month_filter = month
-        save_task_config(task_dir, config)
 
     if month:
         target_months = [month]
@@ -289,6 +313,66 @@ def monthly_archive(task_dir: Path, month: Optional[str] = None,
         target_months = sorted({r.date[:7] for r in all_receipts if r.date})
         if not target_months:
             target_months = [None]
+
+    previews = []
+    for m in target_months:
+        if m:
+            month_receipts = [r for r in all_receipts if r.date and r.date.startswith(m)]
+        else:
+            month_receipts = list(all_receipts)
+
+        if not month_receipts:
+            continue
+
+        total_amount = sum(r.amount or 0 for r in month_receipts)
+        high_risk = sum(1 for r in month_receipts if r.risk_level == "高")
+        medium_risk = sum(1 for r in month_receipts if r.risk_level == "中")
+        duplicates = sum(1 for r in month_receipts if r.is_duplicate)
+        missing_att = sum(1 for r in month_receipts if r.is_missing_attachment)
+        modified = sum(1 for r in month_receipts if r.is_modified)
+
+        file_list = [
+            ("报销清单", "Excel/CSV"),
+            ("风险说明", "Excel"),
+            ("汇总报告", "Markdown"),
+            ("归档包", "ZIP"),
+        ]
+
+        previews.append({
+            "month": m,
+            "receipt_count": len(month_receipts),
+            "total_amount": total_amount,
+            "high_risk": high_risk,
+            "medium_risk": medium_risk,
+            "duplicates": duplicates,
+            "missing_attachments": missing_att,
+            "modified": modified,
+            "files_to_generate": file_list,
+        })
+
+    return {
+        "preview_count": len(previews),
+        "previews": previews,
+        "total_receipts": len(all_receipts),
+    }
+
+
+def monthly_archive(task_dir: Path, month: Optional[str] = None,
+                    fmt: str = "excel", create_zip: bool = True,
+                    batch_id: Optional[str] = None) -> dict:
+    state = load_task_state(task_dir)
+    config = load_task_config(task_dir)
+    all_receipts = [Receipt.from_dict(r) for r in state.receipts]
+
+    if month:
+        target_months = [month]
+    else:
+        target_months = sorted({r.date[:7] for r in all_receipts if r.date})
+        if not target_months:
+            target_months = [None]
+
+    if batch_id is None:
+        batch_id = create_batch_id(task_dir)
 
     archive_results = []
     all_generated_files: list[Path] = []
@@ -303,48 +387,21 @@ def monthly_archive(task_dir: Path, month: Optional[str] = None,
             continue
 
         if fmt == "csv":
-            list_path = export_csv_full(task_dir, month_filter=m)
+            list_path = export_csv_full(task_dir, month_filter=m, batch_id=batch_id,
+                                       operation="archive_month")
         else:
-            list_path = export_excel_full(task_dir, month_filter=m)
+            list_path = export_excel_full(task_dir, month_filter=m, batch_id=batch_id,
+                                         operation="archive_month")
 
-        risk_path = _generate_risk_report(task_dir, month_receipts, month_filter=m)
-        report_path = _generate_summary_report(task_dir, month_receipts, month_filter=m)
+        risk_path = _generate_risk_report(task_dir, month_receipts,
+                                          month_filter=m, batch_id=batch_id,
+                                          operation="archive_month")
+        report_path = _generate_summary_report(task_dir, month_receipts,
+                                                month_filter=m, batch_id=batch_id,
+                                                operation="archive_month")
 
         record_count = len(month_receipts)
         total_amount = sum(r.amount or 0 for r in month_receipts)
-
-        list_record = ExportRecord(
-            export_type=f"{m}月度清单" if m else "月度清单",
-            format=fmt.upper(),
-            filepath=str(list_path.resolve()),
-            record_count=record_count,
-            total_amount=total_amount,
-            month_filter=m,
-            operation="archive_month",
-        )
-        _add_export_record(task_dir, list_record)
-
-        risk_record = ExportRecord(
-            export_type=f"{m}风险说明" if m else "风险说明",
-            format="EXCEL",
-            filepath=str(risk_path.resolve()),
-            record_count=record_count,
-            total_amount=total_amount,
-            month_filter=m,
-            operation="archive_month",
-        )
-        _add_export_record(task_dir, risk_record)
-
-        report_record = ExportRecord(
-            export_type=f"{m}汇总报告" if m else "汇总报告",
-            format="MARKDOWN",
-            filepath=str(report_path.resolve()),
-            record_count=record_count,
-            total_amount=total_amount,
-            month_filter=m,
-            operation="archive_month",
-        )
-        _add_export_record(task_dir, report_record)
 
         zip_path = None
         if create_zip:
@@ -358,14 +415,14 @@ def monthly_archive(task_dir: Path, month: Optional[str] = None,
 
             zip_record = ExportRecord(
                 export_type=f"{m}归档包" if m else "归档包",
-                format="ZIP",
+                format="zip",
                 filepath=str(zip_path.resolve()),
                 record_count=record_count,
                 total_amount=total_amount,
                 month_filter=m,
                 operation="archive_month",
             )
-            _add_export_record(task_dir, zip_record)
+            _add_export_record(task_dir, zip_record, batch_id=batch_id)
             all_generated_files.append(zip_path)
 
         archive_results.append({
@@ -386,7 +443,7 @@ def monthly_archive(task_dir: Path, month: Optional[str] = None,
     month_list = ", ".join(m for m in target_months if m) or "全部"
     append_log(
         task_dir, "archive",
-        f"月度归档完成: {len(archive_results)}个月({month_list}), "
+        f"月度归档完成 (批次 {batch_id}): {len(archive_results)}个月({month_list}), "
         f"生成 {len(all_generated_files)} 个文件"
     )
 
@@ -395,4 +452,5 @@ def monthly_archive(task_dir: Path, month: Optional[str] = None,
         "archives": archive_results,
         "total_files": len(all_generated_files),
         "all_files": all_generated_files,
+        "batch_id": batch_id,
     }

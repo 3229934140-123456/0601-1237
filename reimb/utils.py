@@ -235,3 +235,84 @@ def format_amount(amount: Optional[float]) -> str:
     if amount is None:
         return ""
     return f"¥{amount:,.2f}"
+
+
+def generate_batch_id(counter: int) -> str:
+    date_str = datetime.now().strftime("%Y%m%d")
+    return f"B{date_str}_{counter:03d}"
+
+
+def check_export_files_exist(export_records: list) -> list[dict]:
+    result = []
+    for er in export_records:
+        if isinstance(er, dict):
+            fp = er.get("filepath", "")
+            er_dict = dict(er)
+        else:
+            fp = er.filepath if hasattr(er, "filepath") else ""
+            er_dict = er.to_dict() if hasattr(er, "to_dict") else {}
+        er_dict["file_exists"] = Path(fp).exists()
+        result.append(er_dict)
+    return result
+
+
+def clean_invalid_export_records(export_records: list) -> tuple[list, int]:
+    valid = []
+    removed = 0
+    for er in export_records:
+        if isinstance(er, dict):
+            fp = er.get("filepath", "")
+        else:
+            fp = er.filepath if hasattr(er, "filepath") else ""
+        if Path(fp).exists():
+            valid.append(er)
+        else:
+            removed += 1
+    return valid, removed
+
+
+def get_export_records_by_batch(export_records: list, batch_id: str) -> list:
+    return [er for er in export_records
+            if (isinstance(er, dict) and er.get("batch_id") == batch_id)
+            or (hasattr(er, "batch_id") and er.batch_id == batch_id)]
+
+
+def get_available_batches(export_records: list) -> list[dict]:
+    batches = {}
+    for er in export_records:
+        if isinstance(er, dict):
+            bid = er.get("batch_id", "")
+            op = er.get("operation", "export")
+            ts = er.get("timestamp", "")
+            mf = er.get("month_filter")
+        else:
+            bid = er.batch_id if hasattr(er, "batch_id") else ""
+            op = er.operation if hasattr(er, "operation") else "export"
+            ts = er.timestamp if hasattr(er, "timestamp") else ""
+            mf = er.month_filter if hasattr(er, "month_filter") else None
+        if not bid:
+            continue
+        if bid not in batches:
+            batches[bid] = {
+                "batch_id": bid,
+                "operation": op,
+                "first_timestamp": ts,
+                "month_filter": mf,
+                "file_count": 0,
+                "total_amount": 0.0,
+                "record_count": 0,
+            }
+        batches[bid]["file_count"] += 1
+        if isinstance(er, dict):
+            amt = er.get("total_amount", 0) or 0
+            if amt > batches[bid]["total_amount"]:
+                batches[bid]["total_amount"] = amt
+            rc = er.get("record_count", 0) or 0
+            if rc > batches[bid]["record_count"]:
+                batches[bid]["record_count"] = rc
+        else:
+            if hasattr(er, "total_amount") and er.total_amount > batches[bid]["total_amount"]:
+                batches[bid]["total_amount"] = er.total_amount
+            if hasattr(er, "record_count") and er.record_count > batches[bid]["record_count"]:
+                batches[bid]["record_count"] = er.record_count
+    return sorted(batches.values(), key=lambda x: x["first_timestamp"], reverse=True)

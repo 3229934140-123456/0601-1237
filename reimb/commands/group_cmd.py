@@ -8,7 +8,9 @@ from ..models import Receipt, TaskStatus
 from ..utils import group_by_project, filter_by_month
 
 
-def group_receipts(task_dir: Path, month: Optional[str] = None, use_current_rules: bool = True) -> dict:
+def group_receipts(task_dir: Path, month: Optional[str] = None,
+                   use_current_rules: bool = True,
+                   use_stored_month: bool = False) -> dict:
     state = load_task_state(task_dir)
     config = load_task_config(task_dir)
 
@@ -16,7 +18,9 @@ def group_receipts(task_dir: Path, month: Optional[str] = None, use_current_rule
         config.month_filter = month
         save_task_config(task_dir, config)
 
-    active_month = month if month else config.month_filter
+    active_month = month
+    if active_month is None and use_stored_month and config.month_filter:
+        active_month = config.month_filter
 
     receipts = [Receipt.from_dict(r) for r in state.receipts]
     original_count = len(receipts)

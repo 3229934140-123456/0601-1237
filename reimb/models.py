@@ -63,12 +63,14 @@ class ExportRecord:
     export_type: str
     format: str
     filepath: str
+    batch_id: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     record_count: int = 0
     total_amount: float = 0.0
     month_filter: Optional[str] = None
     operation: str = "export"
     operator: str = "财务人员"
+    note: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -231,6 +233,7 @@ class TaskState:
     groups: dict = field(default_factory=dict)
     logs: list = field(default_factory=list)
     export_records: list = field(default_factory=list)
+    batch_counter: int = 0
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 

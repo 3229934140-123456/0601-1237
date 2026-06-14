@@ -7,6 +7,10 @@ from typing import Optional, Any
 
 from ..config import load_task_state, save_task_state, append_log, LOG_DIR, save_task_config, load_task_config
 from ..models import Receipt, TaskStatus, ProcessLog, TaskConfig, ExportRecord
+from ..utils import (
+    format_amount, check_export_files_exist, get_available_batches,
+    get_export_records_by_batch,
+)
 
 
 ALL_EDITABLE_FIELDS = [
@@ -104,7 +108,58 @@ def get_modification_history(task_dir: Path, receipt_id: Optional[str] = None) -
     return all_mods
 
 
-def view_progress(task_dir: Path, include_all_exports: bool = False) -> dict:
+def get_batch_records(task_dir: Path, batch_id: str) -> Optional[dict]:
+    state = load_task_state(task_dir)
+    records = get_export_records_by_batch(state.export_records, batch_id)
+    if not records:
+        return None
+
+    records_dicts = []
+    for er in records:
+        if isinstance(er, dict):
+            d = dict(er)
+        else:
+            d = er.to_dict() if hasattr(er, "to_dict") else {}
+        d["file_exists"] = Path(d.get("filepath", "")).exists()
+        records_dicts.append(d)
+
+    records_dicts.sort(key=lambda x: x.get("export_type", ""))
+
+    first_ts = min(r.get("timestamp", "") for r in records_dicts)
+    total_amount = max(r.get("total_amount", 0) or 0 for r in records_dicts)
+    record_count = max(r.get("record_count", 0) or 0 for r in records_dicts)
+    month_filter = next((r.get("month_filter") for r in records_dicts if r.get("month_filter")), None)
+    operation = records_dicts[0].get("operation", "export") if records_dicts else "export"
+
+    return {
+        "batch_id": batch_id,
+        "record_count": len(records_dicts),
+        "records": records_dicts,
+        "first_timestamp": first_ts,
+        "total_amount": total_amount,
+        "record_count_receipt": record_count,
+        "month_filter": month_filter,
+        "operation": operation,
+        "valid_files": sum(1 for r in records_dicts if r.get("file_exists")),
+    }
+
+
+def list_batches(task_dir: Path) -> list[dict]:
+    state = load_task_state(task_dir)
+    batches = get_available_batches(state.export_records)
+    for b in batches:
+        recs = get_export_records_by_batch(state.export_records, b["batch_id"])
+        valid = 0
+        for er in recs:
+            fp = er.get("filepath", "") if isinstance(er, dict) else (er.filepath if hasattr(er, "filepath") else "")
+            if Path(fp).exists():
+                valid += 1
+        b["valid_files"] = valid
+    return batches
+
+
+def view_progress(task_dir: Path, include_all_exports: bool = False,
+                  check_file_exists: bool = True) -> dict:
     state = load_task_state(task_dir)
     receipts = [Receipt.from_dict(r) for r in state.receipts]
 
@@ -130,15 +185,20 @@ def view_progress(task_dir: Path, include_all_exports: bool = False) -> dict:
     for step in status_order:
         pipeline.append((step, status_order.index(step) <= current_idx))
 
-    export_records = []
-    for er in state.export_records:
-        if isinstance(er, ExportRecord):
-            export_records.append(er.to_dict())
-        else:
-            export_records.append(er)
-    export_records.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    export_records_checked = check_export_files_exist(state.export_records) if check_file_exists else [
+        (dict(er) if isinstance(er, dict) else er.to_dict())
+        for er in state.export_records
+    ]
+    export_records_checked.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
 
-    export_limit = len(export_records) if include_all_exports else 10
+    if check_file_exists:
+        valid_count = sum(1 for er in export_records_checked if er.get("file_exists"))
+        missing_count = len(export_records_checked) - valid_count
+    else:
+        valid_count = len(export_records_checked)
+        missing_count = 0
+
+    export_limit = len(export_records_checked) if include_all_exports else 10
 
     operation_labels = {
         "export": "普通导出",
@@ -146,9 +206,11 @@ def view_progress(task_dir: Path, include_all_exports: bool = False) -> dict:
         "archive_month": "月度归档",
         "report": "汇总报告",
     }
-    for er in export_records:
+    for er in export_records_checked:
         op = er.get("operation", "export")
         er["operation_label"] = operation_labels.get(op, op)
+
+    batches = get_available_batches(state.export_records)
 
     total_amount_all = sum(r.amount or 0 for r in receipts)
 
@@ -162,6 +224,7 @@ def view_progress(task_dir: Path, include_all_exports: bool = False) -> dict:
         "task_name": state.task_name,
         "status": state.status,
         "rule_version": state.config.get("rule_version", 1) if state.config else 1,
+        "batch_counter": state.batch_counter,
         "total_receipts": total,
         "total_amount": total_amount_all,
         "ocr_completed": has_ocr,
@@ -176,8 +239,11 @@ def view_progress(task_dir: Path, include_all_exports: bool = False) -> dict:
         "pipeline": pipeline,
         "log_count": len(state.logs),
         "status_counts": status_counts,
-        "export_records": export_records[:export_limit],
-        "total_exports": len(export_records),
+        "export_records": export_records_checked[:export_limit],
+        "total_exports": len(export_records_checked),
+        "valid_exports": valid_count,
+        "missing_exports": missing_count,
+        "batches": batches,
         "month_distribution": sorted(month_distribution.items()),
     }
 
