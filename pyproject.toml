@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "reimb"
+version = "1.0.0"
+description = "AI-powered reimbursement materials batch processing CLI tool"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "openpyxl>=3.1.0",
+    "Pillow>=10.0.0",
+    "PyPDF2>=3.0.0",
+    "pytesseract>=0.3.10",
+    "pdf2image>=1.16.0",
+    "python-dateutil>=2.8.0",
+]
+
+[project.scripts]
+reimb = "reimb.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["reimb*"]
