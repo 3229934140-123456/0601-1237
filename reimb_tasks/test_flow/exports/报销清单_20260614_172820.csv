@@ -1,0 +1,4 @@
+﻿序号,票据ID,来源路径,文件名,识别状态,票据类型,日期,金额,员工,项目,是否重复,缺附件,风险等级,风险原因,修改标记,备注
+1,d6c0442c12e2,D:\trae-bz\TraeProjects\1237\test_source\receipt3.pdf,receipt3.pdf,已人工修正,其他,2024-03-15,"¥1,500.50",,,否,否,高,"金额超过阈值(¥1,000.00)；未匹配员工",已修改,
+2,3acb7741fe6c,D:\trae-bz\TraeProjects\1237\test_source\办公费\receipt1.png,receipt1.png,识别失败,其他,,,,办公费,否,否,高,缺少日期；缺少金额；未匹配员工,,
+3,015e2a87ef28,D:\trae-bz\TraeProjects\1237\test_source\差旅费\receipt2.jpg,receipt2.jpg,识别失败,其他,,,,差旅费,否,否,高,缺少日期；缺少金额；未匹配员工,,

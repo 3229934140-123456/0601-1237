@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
-from .models import TaskState, TaskConfig, ProcessLog
+from .models import TaskState, TaskConfig, ProcessLog, Receipt
 
 
 DEFAULT_TASK_DIR = Path.cwd() / "reimb_tasks"
@@ -36,10 +36,16 @@ def init_task_dirs(task_name: str, base_dir: Optional[str] = None) -> Path:
 
 
 def save_task_state(task_dir: Path, state: TaskState) -> None:
-    state.updated_at = __import__("datetime").datetime.now().isoformat()
+    from datetime import datetime
+    state.updated_at = datetime.now().isoformat()
     path = task_dir / TASK_STATE_FILE
+    state_dict = state.to_dict()
+    er_dicts = []
+    for er in state.export_records:
+        er_dicts.append(er.to_dict() if hasattr(er, "to_dict") else er)
+    state_dict["export_records"] = er_dicts
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+        json.dump(state_dict, f, ensure_ascii=False, indent=2)
 
 
 def load_task_state(task_dir: Path) -> TaskState:
@@ -53,8 +59,17 @@ def load_task_state(task_dir: Path) -> TaskState:
 
 def save_task_config(task_dir: Path, config: TaskConfig) -> None:
     path = task_dir / TASK_CONFIG_FILE
+    config_dict = config.to_dict()
+    pk_dicts = []
+    for pk in config.project_keywords:
+        pk_dicts.append(pk.to_dict() if hasattr(pk, "to_dict") else pk)
+    config_dict["project_keywords"] = pk_dicts
+    ar_dicts = []
+    for ar in config.attachment_rules:
+        ar_dicts.append(ar.to_dict() if hasattr(ar, "to_dict") else ar)
+    config_dict["attachment_rules"] = ar_dicts
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(config.to_dict(), f, ensure_ascii=False, indent=2)
+        json.dump(config_dict, f, ensure_ascii=False, indent=2)
 
 
 def load_task_config(task_dir: Path) -> TaskConfig:
@@ -66,9 +81,16 @@ def load_task_config(task_dir: Path) -> TaskConfig:
     return TaskConfig.from_dict(data)
 
 
-def append_log(task_dir: Path, action: str, detail: str, receipt_id: Optional[str] = None) -> None:
+def append_log(task_dir: Path, action: str, detail: str,
+               receipt_id: Optional[str] = None,
+               field: Optional[str] = None,
+               old_value: Any = None,
+               new_value: Any = None) -> None:
     state = load_task_state(task_dir)
-    log = ProcessLog(action=action, detail=detail, receipt_id=receipt_id)
+    log = ProcessLog(
+        action=action, detail=detail, receipt_id=receipt_id,
+        field=field, old_value=old_value, new_value=new_value
+    )
     state.logs.append(log.to_dict())
     save_task_state(task_dir, state)
 
@@ -77,6 +99,8 @@ def append_log(task_dir: Path, action: str, detail: str, receipt_id: Optional[st
         f.write(f"[{log.timestamp}] {action}: {detail}")
         if receipt_id:
             f.write(f" (receipt_id={receipt_id})")
+        if field:
+            f.write(f" [字段修改] {field}: {old_value!r} -> {new_value!r}")
         f.write("\n")
 
 

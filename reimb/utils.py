@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .models import Receipt, ReceiptType
+from .models import Receipt, ReceiptType, RiskLevel, ExtractionStatus
 
 
 def compute_file_hash(filepath: Path, algorithm: str = "sha256") -> str:
@@ -22,6 +22,8 @@ def extract_date_from_text(text: str) -> Optional[str]:
         r"(\d{4})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?",
         r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?",
         r"(\d{2})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{1,2})",
+        r"开票日期[:：\s]*(\d{4})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})",
+        r"乘车日期[:：\s]*(\d{4})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})",
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
@@ -46,13 +48,18 @@ def extract_amount_from_text(text: str) -> Optional[float]:
         r"总计[：:]\s*([\d,]+\.?\d*)",
         r"amount[：:]\s*([\d,]+\.?\d*)",
         r"([\d,]+\.?\d*)\s*元",
+        r"票价[：:]\s*([\d,]+\.?\d*)",
+        r"价税合计[：:]\s*[¥￥]?\s*([\d,]+\.?\d*)",
+        r"小写[：:]\s*[¥￥]?\s*([\d,]+\.?\d*)",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             amount_str = match.group(1).replace(",", "")
             try:
-                return float(amount_str)
+                val = float(amount_str)
+                if val > 0:
+                    return val
             except ValueError:
                 continue
     return None
@@ -62,7 +69,7 @@ def match_employee_name(text: str, employee_list: list[str]) -> Optional[str]:
     if not employee_list:
         return None
     for name in employee_list:
-        if name in text:
+        if name and name in text:
             return name
     return None
 
@@ -70,16 +77,16 @@ def match_employee_name(text: str, employee_list: list[str]) -> Optional[str]:
 def classify_receipt_type(text: str) -> str:
     type_keywords = {
         ReceiptType.INVOICE.value: ["发票", "增值税", "普通发票", "专用发票", "invoice"],
-        ReceiptType.TRAIN_TICKET.value: ["火车票", "高铁票", "动车票", "铁路", "乘车"],
-        ReceiptType.FLIGHT_TICKET.value: ["机票", "航空", "登机牌", "行程单", "航班"],
-        ReceiptType.HOTEL.value: ["住宿", "酒店", "宾馆", "房费", "hotel"],
-        ReceiptType.TAXI.value: ["出租车", "打车", "滴滴", "taxi", "网约车"],
-        ReceiptType.MEAL.value: ["餐饮", "餐费", "饭费", "meal", "用餐"],
+        ReceiptType.TRAIN_TICKET.value: ["火车票", "高铁票", "动车票", "铁路", "乘车", "G字头", "D字头"],
+        ReceiptType.FLIGHT_TICKET.value: ["机票", "航空", "登机牌", "行程单", "航班", "MU", "CA", "CZ"],
+        ReceiptType.HOTEL.value: ["住宿", "酒店", "宾馆", "房费", "hotel", "入住"],
+        ReceiptType.TAXI.value: ["出租车", "打车", "滴滴", "taxi", "网约车", "高德", "滴滴出行"],
+        ReceiptType.MEAL.value: ["餐饮", "餐费", "饭费", "meal", "用餐", "餐厅", "饭店"],
     }
     text_lower = text.lower()
     for rtype, keywords in type_keywords.items():
         for kw in keywords:
-            if kw in text_lower:
+            if kw.lower() in text_lower:
                 return rtype
     return ReceiptType.OTHER.value
 
@@ -99,6 +106,8 @@ def text_similarity(text1: str, text2: str) -> float:
 def detect_duplicates(receipts: list[Receipt], threshold: float = 0.95) -> list[Receipt]:
     hash_map: dict[str, str] = {}
     for receipt in receipts:
+        receipt.is_duplicate = False
+        receipt.duplicate_of = None
         if receipt.file_hash in hash_map:
             receipt.is_duplicate = True
             receipt.duplicate_of = hash_map[receipt.file_hash]
@@ -107,7 +116,7 @@ def detect_duplicates(receipts: list[Receipt], threshold: float = 0.95) -> list[
 
     for i, r1 in enumerate(receipts):
         for j, r2 in enumerate(receipts):
-            if i >= j or r1.is_duplicate:
+            if i >= j or r2.is_duplicate:
                 continue
             if (r1.amount and r2.amount and r1.amount == r2.amount
                     and r1.date and r2.date and r1.date == r2.date
@@ -118,26 +127,28 @@ def detect_duplicates(receipts: list[Receipt], threshold: float = 0.95) -> list[
     return receipts
 
 
-REQUIRED_ATTACHMENTS = {
-    ReceiptType.FLIGHT_TICKET.value: ["行程单", "审批单"],
-    ReceiptType.HOTEL.value: ["入住确认单", "审批单"],
-    ReceiptType.INVOICE.value: ["合同", "审批单"],
-}
+def check_missing_attachments(receipts: list[Receipt],
+                              attachment_rules: Optional[dict[str, list]] = None) -> list[Receipt]:
+    default_rules = {
+        ReceiptType.FLIGHT_TICKET.value: ["行程单", "审批单"],
+        ReceiptType.HOTEL.value: ["入住确认单", "审批单"],
+        ReceiptType.INVOICE.value: ["合同", "审批单"],
+    }
+    rules = attachment_rules if attachment_rules else default_rules
 
-
-def check_missing_attachments(receipts: list[Receipt]) -> list[Receipt]:
     for receipt in receipts:
-        required = REQUIRED_ATTACHMENTS.get(receipt.receipt_type, [])
+        receipt.is_missing_attachment = False
+        receipt.missing_attachments = []
+        required = rules.get(receipt.receipt_type, [])
         if required:
             found = any(att in receipt.ocr_text for att in required)
             if not found:
                 receipt.is_missing_attachment = True
-                receipt.missing_attachments = required
+                receipt.missing_attachments = list(required)
     return receipts
 
 
 def assess_risk(receipts: list[Receipt], amount_threshold: float = 5000.0) -> list[Receipt]:
-    from .models import RiskLevel
     for receipt in receipts:
         reasons = []
         if receipt.is_duplicate:
@@ -145,11 +156,13 @@ def assess_risk(receipts: list[Receipt], amount_threshold: float = 5000.0) -> li
         if receipt.is_missing_attachment:
             reasons.append("缺少附件")
         if receipt.amount and receipt.amount > amount_threshold:
-            reasons.append("金额超过阈值")
+            reasons.append(f"金额超过阈值({format_amount(amount_threshold)})")
         if not receipt.date:
             reasons.append("缺少日期")
         if not receipt.amount:
             reasons.append("缺少金额")
+        if not receipt.employee:
+            reasons.append("未匹配员工")
 
         if len(reasons) >= 2:
             receipt.risk_level = RiskLevel.HIGH.value
@@ -161,10 +174,33 @@ def assess_risk(receipts: list[Receipt], amount_threshold: float = 5000.0) -> li
     return receipts
 
 
-def group_by_project(receipts: list[Receipt], project_list: list[str]) -> dict[str, list[Receipt]]:
+def determine_extraction_status(receipt: Receipt) -> str:
+    if receipt.extraction_error:
+        return ExtractionStatus.FAILED.value
+    if receipt.is_modified:
+        return ExtractionStatus.MODIFIED.value
+    if not receipt.ocr_text:
+        return ExtractionStatus.PENDING.value
+    has_all = receipt.date and receipt.amount and receipt.receipt_type != ReceiptType.OTHER.value
+    has_some = receipt.date or receipt.amount
+    if has_all:
+        return ExtractionStatus.SUCCESS.value
+    if has_some:
+        return ExtractionStatus.PARTIAL.value
+    return ExtractionStatus.FAILED.value
+
+
+def group_by_project(receipts: list[Receipt],
+                     project_list: list[str],
+                     project_keywords: Optional[dict[str, list]] = None) -> dict[str, list[Receipt]]:
     groups: dict[str, list[Receipt]] = {"未分类": []}
     for p in project_list:
         groups[p] = []
+
+    keywords_dict = project_keywords if project_keywords else {}
+    for project in project_list:
+        if project not in keywords_dict:
+            keywords_dict[project] = [project]
 
     for receipt in receipts:
         matched = False
@@ -173,11 +209,14 @@ def group_by_project(receipts: list[Receipt], project_list: list[str]) -> dict[s
             matched = True
         else:
             text = receipt.ocr_text.lower()
-            for project in project_list:
-                if project.lower() in text:
-                    receipt.project = project
-                    groups[project].append(receipt)
-                    matched = True
+            for project, keywords in keywords_dict.items():
+                for kw in keywords:
+                    if kw.lower() in text:
+                        receipt.project = project
+                        groups[project].append(receipt)
+                        matched = True
+                        break
+                if matched:
                     break
         if not matched:
             groups["未分类"].append(receipt)
